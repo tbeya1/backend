@@ -7,7 +7,6 @@ const app = express();
 const PORT = process.env.PORT || 9999;
 
 // Middleware
-const cors = require('cors');
 app.use(cors({ origin: 'https://worldtimeunh.netlify.app' }));
 
 //app.use(cors());
