@@ -34,11 +34,9 @@ const TimeInfo = mongoose.model('TimeInfo', TimeSchema);
 
 // Selected timezones to fetch
 const selectedTimezones = [
-  "Europe/London",
   "America/New_York",
   "Asia/Tokyo",
   "Africa/Cairo",
-  "Australia/Sydney"
 ];
 
 // Optimized fetch-time route (only fetches selected timezones)
