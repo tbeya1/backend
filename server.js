@@ -12,7 +12,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Connect to MongoDB
+// MongoDB connection
 const mongoURI = 'mongodb+srv://tbeya1:1Poilkjmnb%40@cluster0.v5tl8ke.mongodb.net/timeinfo?retryWrites=true&w=majority&appName=Cluster0';
 
 mongoose.connect(mongoURI, {
@@ -36,13 +36,24 @@ const TimeSchema = new mongoose.Schema({
 
 const TimeInfo = mongoose.model('TimeInfo', TimeSchema);
 
-// Router for time endpoints
+// Time Router
 const timeRouter = express.Router();
 
-// List of timezones to fetch
+// /api root - helpful info
+timeRouter.get('/', (req, res) => {
+  res.json({
+    message: 'API is running. Available endpoints:',
+    endpoints: [
+      { method: 'GET', path: '/api/fetch-time', description: 'Fetch and update time info from APIs' },
+      { method: 'GET', path: '/api/time_info', description: 'Retrieve stored time info' }
+    ]
+  });
+});
+
+// Limited timezones to fetch
 const selectedTimezones = ["America/New_York", "Asia/Tokyo", "Africa/Cairo"];
 
-// Route to fetch and store time data
+// Fetch and store time data
 timeRouter.get('/fetch-time', async (req, res) => {
   try {
     for (const timezone of selectedTimezones) {
@@ -65,15 +76,15 @@ timeRouter.get('/fetch-time', async (req, res) => {
         await TimeInfo.findOneAndUpdate({ timezone }, data, { upsert: true, new: true });
 
       } catch (err) {
-        console.warn(`Primary API failed for ${timezone}. Trying fallback...`);
+        console.warn(` WorldTimeAPI failed for ${timezone}, trying fallback...`);
 
         try {
           const fallbackRes = await fetch(`https://timeapi.io/api/Time/current/zone?timeZone=${timezone}`);
-          if (!fallbackRes.ok) throw new Error('Fallback failed');
+          if (!fallbackRes.ok) throw new Error('Fallback API failed');
 
           const fbData = await fallbackRes.json();
           const fallbackData = {
-            timezone: timezone,
+            timezone,
             datetime: new Date(fbData.dateTime),
             utc_offset: fbData.utcOffset,
             abbreviation: fbData.timeZoneAbbreviation || '',
@@ -84,60 +95,52 @@ timeRouter.get('/fetch-time', async (req, res) => {
           };
 
           await TimeInfo.findOneAndUpdate({ timezone }, fallbackData, { upsert: true, new: true });
+
         } catch (fallbackErr) {
-          console.error(`Both APIs failed for ${timezone}:`, fallbackErr.message);
+          console.error(` Both APIs failed for ${timezone}:`, fallbackErr.message);
         }
       }
     }
 
-    res.json({ message: 'Time data updated with fallback support' });
+    res.json({ message: ' Time data updated successfully' });
 
   } catch (error) {
-    console.error('Error in /fetch-time:', error);
-    res.status(500).json({ message: 'Internal error updating time' });
+    console.error(' Error in /fetch-time:', error);
+    res.status(500).json({ message: 'Internal server error while updating time data' });
   }
 });
 
-// Route to return data
+// Get stored time data
 timeRouter.get('/time_info', async (req, res) => {
   try {
-    const data = await TimeInfo.find().sort({ timezone: 1 }); // Sorted for consistent order
+    const data = await TimeInfo.find().sort({ timezone: 1 });
     res.json(data);
   } catch (error) {
     console.error('Error fetching time info:', error);
-    res.status(500).json({ message: 'Error fetching time info' });
+    res.status(500).json({ message: 'Error retrieving time data' });
   }
 });
 
-// Mount timeRouter at /api
+// Use router
 app.use('/api', timeRouter);
 
 // Root route
 app.get('/', (req, res) => {
-  res.send('Welcome to the Final Project API!');
+  res.send('Welcome to the World Time API!');
 });
 
-// Error handler
+// 404 handler (for unmatched routes)
+app.use((req, res) => {
+  res.status(404).json({ message: '404 Not Found: The requested resource could not be found' });
+});
+
+// Global error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled server error:', err.stack);
-  res.status(500).json({ message: 'Unexpected server error.' });
+  res.status(500).json({ message: '500 Internal Server Error: Something went wrong' });
 });
-
-// // ⚠️ DELETE THIS ROUTE AFTER RUNNING ONCE
-// // http://localhost:9999/cleanup-timezones
-// app.get('/cleanup-timezones', async (req, res) => {
-//   try {
-//     const keepTimezones = ["America/New_York", "Asia/Tokyo", "Africa/Cairo"];
-//     const result = await TimeInfo.deleteMany({ timezone: { $nin: keepTimezones } });
-//     res.json({ message: 'Cleanup complete', deletedCount: result.deletedCount });
-//   } catch (err) {
-//     console.error('Cleanup failed:', err.message);
-//     res.status(500).json({ message: 'Cleanup failed', error: err.message });
-//   }
-// });
-
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(` Server running at http://localhost:${PORT}`);
 });
