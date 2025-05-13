@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const fetch = require('node-fetch'); // For fetching external data
+const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 9999;
@@ -10,21 +10,17 @@ const PORT = process.env.PORT || 9999;
 app.use(cors({
   origin: ['https://worldtimeunh.netlify.app', 'http://localhost:5173']
 }));
-
-
-//app.use(cors());
 app.use(express.json());
 
+// Connect to MongoDB
 const mongoURI = 'mongodb+srv://tbeya1:1Poilkjmnb%40@cluster0.v5tl8ke.mongodb.net/timeinfo?retryWrites=true&w=majority&appName=Cluster0';
 
-// Connect to MongoDB
 mongoose.connect(mongoURI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
   .then(() => console.log('Connected to MongoDB Atlas'))
   .catch(err => console.error('MongoDB connection error:', err));
-
 
 // Schema
 const TimeSchema = new mongoose.Schema({
@@ -40,51 +36,40 @@ const TimeSchema = new mongoose.Schema({
 
 const TimeInfo = mongoose.model('TimeInfo', TimeSchema);
 
-// Selected timezones to fetch
-const selectedTimezones = [
-  "America/New_York",
-  "Asia/Tokyo",
-  "Africa/Cairo",
-];
+// Router for time endpoints
+const timeRouter = express.Router();
 
-app.get('/fetch-time', async (req, res) => {
+// List of timezones to fetch
+const selectedTimezones = ["America/New_York", "Asia/Tokyo", "Africa/Cairo"];
+
+// Route to fetch and store time data
+timeRouter.get('/fetch-time', async (req, res) => {
   try {
     for (const timezone of selectedTimezones) {
       try {
-        // First attempt: WorldTimeAPI
-        let response = await fetch(`https://worldtimeapi.org/api/timezone/${timezone}`);
-        let data;
+        const response = await fetch(`https://worldtimeapi.org/api/timezone/${timezone}`);
+        if (!response.ok) throw new Error(`WorldTimeAPI failed with status ${response.status}`);
 
-        if (!response.ok) {
-          throw new Error(`WorldTimeAPI failed with status ${response.status}`);
-        }
-
-        data = await response.json();
-        // Normalize structure to match your Mongo schema
-        data = {
-          timezone: data.timezone,
-          datetime: new Date(data.datetime),
-          utc_offset: data.utc_offset,
-          abbreviation: data.abbreviation,
-          day_of_week: data.day_of_week,
-          day_of_year: data.day_of_year,
-          unixtime: data.unixtime,
-          utc_datetime: new Date(data.utc_datetime),
+        const raw = await response.json();
+        const data = {
+          timezone: raw.timezone,
+          datetime: new Date(raw.datetime),
+          utc_offset: raw.utc_offset,
+          abbreviation: raw.abbreviation,
+          day_of_week: raw.day_of_week,
+          day_of_year: raw.day_of_year,
+          unixtime: raw.unixtime,
+          utc_datetime: new Date(raw.utc_datetime),
         };
 
-        // Save to DB
-        await TimeInfo.findOneAndUpdate({ timezone: data.timezone }, data, { upsert: true, new: true });
+        await TimeInfo.findOneAndUpdate({ timezone }, data, { upsert: true, new: true });
 
       } catch (err) {
-        console.warn(`WorldTimeAPI failed for ${timezone}, trying fallback:`, err.message);
+        console.warn(`Primary API failed for ${timezone}. Trying fallback...`);
 
-        // Fallback: timeapi.io
         try {
           const fallbackRes = await fetch(`https://timeapi.io/api/Time/current/zone?timeZone=${timezone}`);
-          if (!fallbackRes.ok) {
-            console.error(`Fallback also failed for ${timezone}: ${fallbackRes.statusText}`);
-            continue;
-          }
+          if (!fallbackRes.ok) throw new Error('Fallback failed');
 
           const fbData = await fallbackRes.json();
           const fallbackData = {
@@ -99,43 +84,58 @@ app.get('/fetch-time', async (req, res) => {
           };
 
           await TimeInfo.findOneAndUpdate({ timezone }, fallbackData, { upsert: true, new: true });
-
         } catch (fallbackErr) {
-          console.error(`Fallback failed for ${timezone}:`, fallbackErr.message);
+          console.error(`Both APIs failed for ${timezone}:`, fallbackErr.message);
         }
       }
     }
 
-    res.json({ message: 'Selected timezones processed with fallback support.' });
+    res.json({ message: 'Time data updated with fallback support' });
 
   } catch (error) {
-    console.error('Error in /fetch-time:', error.message);
-    res.status(500).json({ message: 'Error fetching time', error: error.message });
+    console.error('Error in /fetch-time:', error);
+    res.status(500).json({ message: 'Internal error updating time' });
   }
 });
 
-
-// Get latest time info
-app.get('/time_info', async (req, res) => {
+// Route to return data
+timeRouter.get('/time_info', async (req, res) => {
   try {
-    const allTimes = await TimeInfo.find().sort({ _id: -1 }).limit(5);
-    res.json(allTimes);
+    const data = await TimeInfo.find().sort({ timezone: 1 }); // Sorted for consistent order
+    res.json(data);
   } catch (error) {
     console.error('Error fetching time info:', error);
     res.status(500).json({ message: 'Error fetching time info' });
   }
 });
 
-// Home route
+// Mount timeRouter at /api
+app.use('/api', timeRouter);
+
+// Root route
 app.get('/', (req, res) => {
   res.send('Welcome to the Final Project API!');
 });
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error('Server error:', err.stack);
+  console.error('Unhandled server error:', err.stack);
   res.status(500).json({ message: 'Unexpected server error.' });
 });
+
+// // ⚠️ DELETE THIS ROUTE AFTER RUNNING ONCE
+// // http://localhost:9999/cleanup-timezones
+// app.get('/cleanup-timezones', async (req, res) => {
+//   try {
+//     const keepTimezones = ["America/New_York", "Asia/Tokyo", "Africa/Cairo"];
+//     const result = await TimeInfo.deleteMany({ timezone: { $nin: keepTimezones } });
+//     res.json({ message: 'Cleanup complete', deletedCount: result.deletedCount });
+//   } catch (err) {
+//     console.error('Cleanup failed:', err.message);
+//     res.status(500).json({ message: 'Cleanup failed', error: err.message });
+//   }
+// });
+
 
 // Start server
 app.listen(PORT, () => {
